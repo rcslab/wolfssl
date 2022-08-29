@@ -1591,7 +1591,7 @@ enum Misc {
 
 /* max size of a handshake message, currently set to the certificate */
 #ifndef MAX_HANDSHAKE_SZ
-    #define MAX_HANDSHAKE_SZ MAX_CERTIFICATE_SZ
+    #define MAX_HANDSHAKE_SZ ((MAX_CERTIFICATE_SZ) * 4)
 #endif
 
 #ifndef SESSION_TICKET_LEN

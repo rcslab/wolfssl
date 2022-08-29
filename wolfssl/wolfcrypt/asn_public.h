@@ -337,6 +337,32 @@ typedef struct Cert {
     byte     issRaw[sizeof(CertName)];   /* raw issuer info */
     byte     sbjRaw[sizeof(CertName)];   /* raw subject info */
 #endif
+#ifdef WOLFSSL_SGX_ATTESTATION
+    byte    iasSigCACert[2048];
+    int     iasSigCACertSz;
+    byte    iasSigCert[2048];
+    int     iasSigCertSz;
+    byte    iasSig[2048];
+    int     iasSigSz;
+    byte    iasAttestationReport[2048];
+    int     iasAttestationReportSz;
+    byte    quote[2048];
+    int     quoteSz;
+    byte    pckCrt[2048];
+    int     pckCrtSz;
+    byte    pckSignChain[4096];
+    int     pckSignChainSz;
+    byte    tcbInfo[4096];
+    int     tcbInfoSz;
+    byte    tcbSignChain[4096];
+    int     tcbSignChainSz;
+    byte    qeIdentity[1024];
+    int     qeIdentitySz;
+    byte    rootCaCrl[1024];
+    int     rootCaCrlSz;
+    byte    pckCrl[1024];
+    int     pckCrlSz;
+#endif
 #ifdef WOLFSSL_CERT_REQ
     char     challengePw[CTC_NAME_SIZE];
     int      challengePwPrintableString; /* encode as PrintableString */
@@ -614,6 +640,10 @@ typedef struct _wc_CertPIV {
 WOLFSSL_API int wc_ParseCertPIV(wc_CertPIV* cert, const byte* buf, word32 totalSz);
 #endif /* WOLFSSL_CERT_PIV */
 
+
+#ifdef WOLFSSL_SGX_ATTESTATION
+WOLFSSL_API int SetRsaPublicKey(byte* output, RsaKey* key, int outLen, int with_header);
+#endif
 
 #ifdef __cplusplus
     } /* extern "C" */

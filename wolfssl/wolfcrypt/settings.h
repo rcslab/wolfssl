@@ -1731,7 +1731,9 @@ extern void uITRON4_free(void *p) ;
     #define ECC_TIMING_RESISTANT
     #define TFM_TIMING_RESISTANT
     #define SINGLE_THREADED
+#if !defined(WOLFSSL_SGX_ATTESTATION)
     #define NO_ASN_TIME /* can not use headers such as windows.h */
+#endif
     #define HAVE_AESGCM
     #define USE_CERT_BUFFERS_2048
     #define USE_FAST_MATH

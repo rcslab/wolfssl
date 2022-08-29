@@ -13621,14 +13621,11 @@ static int DoHandShakeMsg(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         ret = DoHandShakeMsgType(ssl, input, inOutIdx, type, size, totalSz);
     }
     else {
-        word32 pendSz =
-            ssl->arrays->pendingMsgSz - ssl->arrays->pendingMsgOffset;
+        if (inputLength + ssl->arrays->pendingMsgOffset
+                                                  > ssl->arrays->pendingMsgSz) {
 
-        /* Catch the case where there may be the remainder of a fragmented
-         * handshake message and the next handshake message in the same
-         * record. */
-        if (inputLength > pendSz)
-            inputLength = pendSz;
+            return BUFFER_ERROR;
+        }
 
         XMEMCPY(ssl->arrays->pendingMsg + ssl->arrays->pendingMsgOffset,
                 input + *inOutIdx, inputLength);
@@ -13637,11 +13634,13 @@ static int DoHandShakeMsg(WOLFSSL* ssl, byte* input, word32* inOutIdx,
 
         if (ssl->arrays->pendingMsgOffset == ssl->arrays->pendingMsgSz)
         {
-            word32 idx = HANDSHAKE_HEADER_SZ;
+            word32 idx = 0;
             ret = DoHandShakeMsgType(ssl,
-                                     ssl->arrays->pendingMsg,
+                                     ssl->arrays->pendingMsg
+                                                          + HANDSHAKE_HEADER_SZ,
                                      &idx, ssl->arrays->pendingMsgType,
-                                     ssl->arrays->pendingMsgSz - idx,
+                                     ssl->arrays->pendingMsgSz
+                                                          - HANDSHAKE_HEADER_SZ,
                                      ssl->arrays->pendingMsgSz);
         #ifdef WOLFSSL_ASYNC_CRYPT
             if (ret == WC_PENDING_E) {

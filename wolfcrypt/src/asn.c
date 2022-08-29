@@ -177,6 +177,7 @@ int GetLength(const byte* input, word32* inOutIdx, int* len,
     return GetLength_ex(input, inOutIdx, len, maxIdx, 1);
 }
 
+#include <assert.h>
 
 /* give option to check length value found against index. 1 to check 0 to not */
 int GetLength_ex(const byte* input, word32* inOutIdx, int* len,
@@ -11538,7 +11539,10 @@ int wc_PemPubKeyToDer(const char* fileName,
 /* USER RSA ifdef portions used instead of refactor in consideration for
    possible fips build */
 /* Write a public RSA key to output */
-static int SetRsaPublicKey(byte* output, RsaKey* key,
+#if !defined(WOLFSSL_SGX_ATTESTATION)
+static
+#endif
+int SetRsaPublicKey(byte* output, RsaKey* key,
                            int outLen, int with_header)
 {
 #ifdef WOLFSSL_SMALL_STACK
@@ -11941,6 +11945,20 @@ typedef struct DerCert {
     byte extKeyUsage[MAX_EXTKEYUSAGE_SZ]; /* Extended Key Usage extension */
     byte certPolicies[MAX_CERTPOL_NB*MAX_CERTPOL_SZ]; /* Certificate Policies */
 #endif
+#ifdef WOLFSSL_SGX_ATTESTATION
+    byte    iasSigCACert[2048];
+    byte    iasSigCert[2048];
+    byte    iasSig[2048];
+    byte    iasAttestationReport[2048];
+    byte    quote[2048];
+    byte    pckCrt[2048];
+    byte    pckSignChain[4096];
+    byte    tcbInfo[4096];
+    byte    tcbSignChain[4096];
+    byte    qeIdentity[1024];
+    byte    rootCaCrl[1024];
+    byte    pckCrl[1024];
+#endif
 #ifdef WOLFSSL_CERT_REQ
     byte attrib[MAX_ATTRIB_SZ];        /* Cert req attributes encoded */
 #endif
@@ -11962,6 +11980,20 @@ typedef struct DerCert {
     int  keyUsageSz;                   /* encoded KeyUsage extension length */
     int  extKeyUsageSz;                /* encoded ExtendedKeyUsage extension length */
     int  certPoliciesSz;               /* encoded CertPolicies extension length*/
+#endif
+#ifdef WOLFSSL_SGX_ATTESTATION
+    int iasSigCACertSz;
+    int iasSigCertSz;
+    int iasSigSz;
+    int iasAttestationReportSz;
+    int quoteSz;
+    int pckCrtSz;
+    int pckSignChainSz;
+    int tcbInfoSz;
+    int tcbSignChainSz;
+    int qeIdentitySz;
+    int rootCaCrlSz;
+    int pckCrlSz;
 #endif
 #ifdef WOLFSSL_ALT_NAMES
     int  altNamesSz;                   /* encoded AltNames extension length */
@@ -12816,7 +12848,16 @@ static int SetKeyUsage(byte* output, word32 outSz, word16 input)
                        ku, idx);
 }
 
-static int SetOjectIdValue(byte* output, word32 outSz, int* idx,
+#if !defined(WOLFSSL_SGX_ATTESTATION)
+static
+#endif
+int SetOjectIdValue(byte* output, word32 outSz, int* idx,
+                    const byte* oid, word32 oidSz);
+
+#if !defined(WOLFSSL_SGX_ATTESTATION)
+static
+#endif
+int SetOjectIdValue(byte* output, word32 outSz, int* idx,
     const byte* oid, word32 oidSz)
 {
     /* verify room */
@@ -12829,6 +12870,53 @@ static int SetOjectIdValue(byte* output, word32 outSz, int* idx,
 
     return 0;
 }
+
+#ifdef WOLFSSL_SGX_ATTESTATION
+static int SetSGXExt(byte* output, word32 outSz, const byte* oid, int oidSz, const byte *input, word32 length)
+{
+    byte ext_len[1 + MAX_LENGTH_SZ];
+    byte ext_enc_len[MAX_LENGTH_SZ];
+    byte oid_enc[16];
+    int idx = 0, ext_lenSz;
+    int oid_enc_lenSz = 0;
+    
+    if (output == NULL || input == NULL || oid == NULL)
+        return BAD_FUNC_ARG;
+
+    ext_lenSz = SetOctetString(length, ext_len);
+
+    SetLength(length + ext_lenSz, ext_enc_len);
+
+    SetOjectIdValue(oid_enc, sizeof(oid_enc), &oid_enc_lenSz, oid, oidSz);
+    
+    if (outSz < 3)
+        return BUFFER_E;
+
+    idx = SetSequence(length + oid_enc_lenSz + ext_lenSz,
+                      output);
+
+    if ((idx + length + oid_enc_lenSz + ext_lenSz) > outSz)
+        return BUFFER_E;
+
+    /* put oid */
+    XMEMCPY(output+idx, oid_enc, oid_enc_lenSz);
+    idx += oid_enc_lenSz;
+
+    /* put encoded len */
+    /* XMEMCPY(output+idx, ext_enc_len, ext_enc_lenSz); */
+    /* idx += ext_enc_lenSz; */
+
+    /* put octet header */
+    XMEMCPY(output+idx, ext_len, ext_lenSz);
+    idx += ext_lenSz;
+
+    /* put value */
+    XMEMCPY(output+idx, input, length);
+    idx += length;
+
+    return idx;
+}
+#endif
 
 /* encode Extended Key Usage (RFC 5280 4.2.1.12), return total bytes written */
 static int SetExtKeyUsage(Cert* cert, byte* output, word32 outSz, byte input)
@@ -13720,6 +13808,103 @@ static int EncodeCert(Cert* cert, DerCert* der, RsaKey* rsaKey, ecc_key* eccKey,
         der->certPoliciesSz = 0;
 #endif /* WOLFSSL_CERT_EXT */
 
+#ifdef WOLFSSL_SGX_ATTESTATION
+    if (cert->iasSigCACertSz > 0 &&
+        cert->iasSigCertSz > 0 &&
+        cert->iasSigSz > 0 &&
+        cert->iasAttestationReportSz > 0) {
+
+// 1.2.840.113741.1337.*
+#define OID(N) {0x2A, 0x86, 0x48, 0x86, 0xF8, 0x4D, 0x8A, 0x39, (N)}
+
+        unsigned char iasAttestationReportOid[] = OID(0x02);
+        unsigned char iasSigCACertOid[] = OID(0x03);
+        unsigned char iasSigCertOid[] = OID(0x04);
+        unsigned char iasSigOid[] = OID(0x05);
+
+        der->iasSigCACertSz = SetSGXExt(der->iasSigCACert, sizeof(der->iasSigCACert),
+                                        iasSigCACertOid, sizeof(iasSigCACertOid),
+                                        cert->iasSigCACert, cert->iasSigCACertSz);
+
+        der->iasSigCertSz = SetSGXExt(der->iasSigCert, sizeof(der->iasSigCert),
+                                      iasSigCertOid, sizeof(iasSigCertOid),
+                                      cert->iasSigCert, cert->iasSigCertSz);
+
+        der->iasSigSz = SetSGXExt(der->iasSig, sizeof(der->iasSig),
+                                  iasSigOid, sizeof(iasSigOid),
+                                  cert->iasSig, cert->iasSigSz);
+
+        der->iasAttestationReportSz = SetSGXExt(der->iasAttestationReport,
+                                                sizeof(der->iasAttestationReport),
+                                                iasAttestationReportOid,
+                                                sizeof(iasAttestationReportOid),
+                                                cert->iasAttestationReport,
+                                                cert->iasAttestationReportSz);
+
+        der->extensionsSz += der->iasAttestationReportSz +
+            der->iasSigCACertSz +
+            der->iasSigCertSz +
+            der->iasSigSz;
+    }
+
+    if (cert->quoteSz > 0 && cert->pckCrtSz > 0 && cert->pckSignChainSz > 0 &&
+        cert->tcbInfoSz > 0 && cert->tcbSignChainSz > 0 && cert->qeIdentitySz > 0 &&
+        cert->rootCaCrlSz > 0 && cert->pckCrlSz > 0) {
+
+        const unsigned char quoteOid[] = OID(0x06);
+        der->quoteSz = SetSGXExt(der->quote, sizeof(der->quote),
+                                 quoteOid, sizeof(quoteOid),
+                                 cert->quote, cert->quoteSz);
+        assert(der->quoteSz > 0);
+
+        const unsigned char pckCrtOid[] = OID(0x07);
+        der->pckCrtSz = SetSGXExt(der->pckCrt, sizeof(der->pckCrt),
+                                 pckCrtOid, sizeof(pckCrtOid),
+                                 cert->pckCrt, cert->pckCrtSz);
+        assert(der->pckCrtSz > 0);
+
+        const unsigned char pckSignChainOid[] = OID(0x08);
+        der->pckSignChainSz = SetSGXExt(der->pckSignChain, sizeof(der->pckSignChain),
+                                 pckSignChainOid, sizeof(pckSignChainOid),
+                                 cert->pckSignChain, cert->pckSignChainSz);
+        assert(der->pckSignChainSz > 0);
+
+        const unsigned char tcbInfoOid[] = OID(0x09);
+        der->tcbInfoSz = SetSGXExt(der->tcbInfo, sizeof(der->tcbInfo),
+                                 tcbInfoOid, sizeof(tcbInfoOid),
+                                 cert->tcbInfo, cert->tcbInfoSz);
+        assert(der->tcbInfoSz > 0);
+
+        const unsigned char tcbSignChainOid[] = OID(0x0a);
+        der->tcbSignChainSz = SetSGXExt(der->tcbSignChain, sizeof(der->tcbSignChain),
+                                 tcbSignChainOid, sizeof(tcbSignChainOid),
+                                 cert->tcbSignChain, cert->tcbSignChainSz);
+        assert(der->tcbSignChainSz > 0);
+
+        const unsigned char qeIdentityOid[] = OID(0x0b);
+        der->qeIdentitySz = SetSGXExt(der->qeIdentity, sizeof(der->qeIdentity),
+                                 qeIdentityOid, sizeof(qeIdentityOid),
+                                 cert->qeIdentity, cert->qeIdentitySz);
+        assert(der->qeIdentitySz > 0);
+
+        const unsigned char rootCaCrlOid[] = OID(0x0c);
+        der->rootCaCrlSz = SetSGXExt(der->rootCaCrl, sizeof(der->rootCaCrl),
+                                 rootCaCrlOid, sizeof(rootCaCrlOid),
+                                 cert->rootCaCrl, cert->rootCaCrlSz);
+        assert(der->rootCaCrlSz > 0);
+
+        const unsigned char pckCrlOid[] = OID(0x0d);
+        der->pckCrlSz = SetSGXExt(der->pckCrl, sizeof(der->pckCrl),
+                                 pckCrlOid, sizeof(pckCrlOid),
+                                 cert->pckCrl, cert->pckCrlSz);
+        assert(der->pckCrlSz > 0);
+
+        der->extensionsSz += der->quoteSz + der->pckCrtSz + der->pckSignChainSz +
+            der->tcbInfoSz + der->tcbSignChainSz + der->qeIdentitySz + der->rootCaCrlSz +
+            der->pckCrlSz;
+}
+#endif
+    
     /* put extensions */
     if (der->extensionsSz > 0) {
 
@@ -13796,6 +13981,88 @@ static int EncodeCert(Cert* cert, DerCert* der, RsaKey* rsaKey, ecc_key* eccKey,
                 return EXTENSIONS_E;
         }
 #endif /* WOLFSSL_CERT_EXT */
+#ifdef WOLFSSL_SGX_ATTESTATION
+        if (der->iasSigCACertSz && der->iasSigCertSz &&
+            der->iasSigSz && der->iasAttestationReportSz) {
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->iasAttestationReport, der->iasAttestationReportSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->iasSigCACert, der->iasSigCACertSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->iasSigCert, der->iasSigCertSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->iasSig, der->iasSigSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+        }
+
+        if (der->quoteSz > 0 && der->pckCrtSz > 0 && der->pckSignChainSz > 0 &&
+            der->tcbInfoSz > 0 && der->tcbSignChainSz > 0 && der->qeIdentitySz > 0 &&
+            der->rootCaCrlSz > 0 && der->pckCrlSz > 0) {
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->quote, der->quoteSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->pckCrt, der->pckCrtSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->pckSignChain, der->pckSignChainSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->tcbInfo, der->tcbInfoSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->tcbSignChain, der->tcbSignChainSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+            
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->qeIdentity, der->qeIdentitySz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->rootCaCrl, der->rootCaCrlSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+
+            ret = SetExtensions(der->extensions, sizeof(der->extensions),
+                                &der->extensionsSz,
+                                der->pckCrl, der->pckCrlSz);
+            if (ret <= 0)
+                return EXTENSIONS_E;
+}
+#endif
     }
 
     der->total = der->versionSz + der->serialSz + der->sigAlgoSz +

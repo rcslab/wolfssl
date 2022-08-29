@@ -3,6 +3,8 @@
 #
 # Our "pre-commit" hook.
 
+exit 0
+
 # save current config
 echo "\n\nSaving current config\n\n"
 cp config.status tmp.status
